@@ -9,7 +9,7 @@ BW_HASH=
 # Options
 CLEAR=$DEFAULT_CLEAR # Clear password after N seconds (0 to disable)
 SHOW_PASSWORD=no # Show part of the password in the notification
-AUTO_LOCK=-1 # -1 to disable auto-lock (PIN protection handles this now)
+AUTO_LOCK=900 # 15 minutes, default for bitwarden apps
 CLIPBOARD_HISTORY_CLEAR="" # Enter the clear command for you cliboard history manager
 
 # PIN protection settings
