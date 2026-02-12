@@ -120,6 +120,7 @@ Install these **required** dependencies:
 **Optionally** install these requirements:
 - xclip, xsel, or wl-clipboard
 - xdotool or ydotool
+- whois
 
 Then download the script file and place it somewhere on your `$PATH` and grant it
 the `+x` permission.

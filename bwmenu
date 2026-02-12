@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # Rofi extension for BitWarden-cli
 NAME="$(basename "$0")"
 VERSION="0.5"
@@ -8,11 +9,19 @@ BW_HASH=
 # Options
 CLEAR=$DEFAULT_CLEAR # Clear password after N seconds (0 to disable)
 SHOW_PASSWORD=no # Show part of the password in the notification
-AUTO_LOCK=900 # 15 minutes, default for bitwarden apps
+AUTO_LOCK=-1 # -1 to disable auto-lock (PIN protection handles this now)
+CLIPBOARD_HISTORY_CLEAR="" # Enter the clear command for you cliboard history manager
+
+# PIN protection settings
+USE_PIN=no # Use pin protection after master password is entered ounce (reset on /tmp clear)
+PIN_CACHE_DIR="$HOME/.local/share/bwmenu"
+PIN_HASH_FILE="$PIN_CACHE_DIR/pin.sha256"  # Stores hashed PIN
+PIN_TIMEOUT=300 # 5 minutes
+USER_PIN=
 
 # Holds the available items in memory
 ITEMS=
-CACHE_FILE=/tmp/bwmenu/logins.gpg
+CACHE_FILE="${XDG_RUNTIME_DIR:-/tmp}/bwmenu/logins.gpg"
 
 # Stores which command will be used to emulate keyboard type
 AUTOTYPE_MODE=
@@ -52,8 +61,158 @@ DEDUP_MARK="(+)"
 DIR="$(dirname "$(readlink -f "$0")")"
 source "$DIR/lib-bwmenu"
 
+# Check if mkpasswd is available (requires 'whois' package)
+check_mkpasswd() {
+  if ! command -v mkpasswd &>/dev/null; then
+    local msg="mkpasswd not found. Install 'whois' package to use PIN protection."
+    
+    # Try notify-send first, fall back to rofi
+    if command -v notify-send &>/dev/null; then
+      notify-send -u critical "bwmenu - Missing Dependency" "$msg"
+    fi
+    
+    rofi -e "$msg" ${ROFI_OPTIONS[@]}
+    exit 1
+  fi
+}
+
+# Hash the PIN using SHA256
+hash_pin() {
+  # echo -n "$1" | sha256sum | awk '{print $1}'
+  # Requires mkpasswd from whois package
+  echo "$1" | mkpasswd --stdin -m sha-512 -S "$(openssl rand -hex 8)"
+}
+
+# Check if PIN is already set
+is_pin_set() {
+  [ -f "$PIN_HASH_FILE" ]
+}
+
+# Encrypt by piping passphrase via stdin
+encrypt_with_pin() {
+  local data="$1"
+  local output_file="$2"
+  local passphrase="$3"
+  
+  # Prevent GPG agent from caching the passphrase
+  echo "$data" | gpg -c --batch --yes \
+    --passphrase-fd 3 \
+    --cipher-algo AES256 \
+    --s2k-mode 3 \
+    --s2k-count 65011712 \
+    --no-symkey-cache \
+    --pinentry-mode loopback \
+    -o "$output_file" 3<<<"$passphrase" 2>/dev/null
+}
+
+# Decrypt by piping passphrase via stdin
+decrypt_with_pin() {
+  local input_file="$1"
+  local passphrase="$2"
+  
+  gpg --quiet -d --batch \
+    --passphrase-fd 3 \
+    --cipher-algo AES256 \
+    --no-symkey-cache \
+    --pinentry-mode loopback \
+    "$input_file" 3<<<"$passphrase" 2>/dev/null
+}
+
+# Verify PIN against stored hash
+verify_pin() {
+  local entered_pin="$1"
+  local stored_hash="$2"
+  
+  # Extract salt from stored hash (format: $6$SALT$HASH)
+  local salt=$(echo "$stored_hash" | cut -d'$' -f3)
+  
+  # Hash entered PIN with the SAME salt
+  local entered_hash
+  entered_hash=$(echo "$entered_pin" | mkpasswd --stdin -m sha-512 -S "$salt")
+  
+  # Compare hashes
+  [ "$entered_hash" = "$stored_hash" ]
+}
+
+# Ask for PIN (minimum 6 characters)
+ask_pin() {
+  local pin
+  local pin_confirm
+  
+  # Check if we're setting a new PIN or verifying existing
+  if is_pin_set; then
+    # Verify existing PIN
+    while true; do
+      pin=$(printf '' | rofi -dmenu -p "Enter PIN" -password -l 0 ${ROFI_OPTIONS[@]}) || exit $?
+      
+      if [ ${#pin} -lt 6 ]; then
+        rofi -e "PIN must be at least 6 characters" ${ROFI_OPTIONS[@]}
+        continue
+      fi
+      
+      # Verify PIN against stored hash
+      local stored_hash
+      stored_hash=$(cat "$PIN_HASH_FILE")
+      
+      if verify_pin "$pin" "$stored_hash"; then
+        echo "$pin"  # Return actual PIN for GPG
+        return 0
+      else
+        rofi -e "Incorrect PIN" ${ROFI_OPTIONS[@]}
+        continue
+      fi
+    done
+  else
+    # Set new PIN
+    while true; do
+      pin=$(printf '' | rofi -dmenu -p "Create PIN (min 6 chars)" -password -l 0 ${ROFI_OPTIONS[@]}) || exit $?
+      
+      if [ ${#pin} -lt 6 ]; then
+        rofi -e "PIN must be at least 6 characters" ${ROFI_OPTIONS[@]}
+        continue
+      fi
+      
+      pin_confirm=$(printf '' | rofi -dmenu -p "Confirm PIN" -password -l 0 ${ROFI_OPTIONS[@]}) || exit $?
+      
+      if [ "$pin" != "$pin_confirm" ]; then
+        rofi -e "PINs do not match" ${ROFI_OPTIONS[@]}
+        continue
+      fi
+      
+      # Save PIN hash
+      mkdir -p "$PIN_CACHE_DIR"
+      chmod 700 "$PIN_CACHE_DIR"
+      hash_pin "$pin" > "$PIN_HASH_FILE"
+      chmod 600 "$PIN_HASH_FILE"
+      
+      echo "$pin"
+      return 0
+    done
+  fi
+}
+
+# Get PIN from cache or ask for it
+get_pin() {
+  # Try to get PIN from keyctl (RAM cache)
+  if ! key_id=$(keyctl request user bw_pin 2>/dev/null); then
+    # Ask for PIN (will create new one if not set, or verify if it exists)
+    pin=$(ask_pin) || exit $?
+    
+    # Store PIN in keyctl with timeout
+    key_id=$(echo "$pin" | keyctl padd user bw_pin @u)
+    keyctl timeout "$key_id" $PIN_TIMEOUT
+    
+    USER_PIN="$pin"
+  else
+    # Get PIN from keyctl
+    USER_PIN=$(keyctl pipe "$key_id")
+  fi
+}
+
 ask_password() {
-  rm $CACHE_FILE
+  # Clear cache file when unlocking
+  rm -f "$CACHE_FILE"
+  
   mpw=$(printf '' | rofi -dmenu -p "Master Password" -password -l 0 ${ROFI_OPTIONS[@]}) || exit $?
   if ! out="$(bw --raw --nointeraction unlock "$mpw" 2>&1)"; then
     exit_error 1 "Could not unlock vault: $out"
@@ -81,7 +240,11 @@ get_session_key() {
 # Load encrypted passwords from cache if exists
 load_cache() {
   if [ -f "$CACHE_FILE" ]; then
-    ITEMS=$(gpg --quiet -d --batch --passphrase $BW_HASH --cipher-algo AES256 $CACHE_FILE)
+    ITEMS=$(decrypt_with_pin "$CACHE_FILE" "$USER_PIN")
+    if [ $? -ne 0 ]; then
+      # Cache corrupted or wrong PIN, reload items
+      load_items
+    fi
   else
     load_items
   fi
@@ -95,9 +258,9 @@ load_items() {
     exit_error $? "Could not load items: $ITEMS"
   fi
 
-  # create dir for cache and encrypt $ITEMS
-  mkdir -p $(dirname $CACHE_FILE)
-  echo "$ITEMS" | gpg -c --batch --passphrase $BW_HASH --cipher-algo AES256 -o $CACHE_FILE
+  # create dir for cache and encrypt $ITEMS with PIN
+  mkdir -p $(dirname "$CACHE_FILE")
+  encrypt_with_pin "$ITEMS" "$CACHE_FILE" "$USER_PIN"
 }
 
 exit_error() {
@@ -218,7 +381,7 @@ sync_bitwarden() {
     exit_error 1 "Failed to sync bitwarden: $error"
   fi
 
-  rm $CACHE_FILE
+  rm -f $CACHE_FILE
   load_items
   show_items
 }
@@ -364,6 +527,12 @@ copy_password() {
 
     show_copy_notification "$(echo "$1" | jq -r '.[0]')"
     echo -n "$pass" | clipboard-set
+    
+    # Custom command to clear clipboard history
+    if [[ -n "$CLIPBOARD_HISTORY_CLEAR" ]]; then
+      sleep 0.1
+      $CLIPBOARD_HISTORY_CLEAR 2>/dev/null || true
+    fi
 
     if [[ $CLEAR -gt 0 ]]; then
       sleep "$CLEAR"
@@ -402,9 +571,23 @@ copy_totp() {
   fi
 }
 
-# Lock the vault by purging the key used to store the session hash
+# Lock the vault by purging the key used to store the session hash and clearing PIN from RAM
 lock_vault() {
   keyctl purge user bw_session &>/dev/null
+  if [ "$USE_PIN" = "yes" ]; then
+    keyctl purge user bw_pin &>/dev/null
+    rm -f "$CACHE_FILE"
+    notify-send "Vault Locked" "PIN session and cache cleared (PIN remains set)"
+  fi
+}
+
+# Clear PIN completely (removes saved PIN, requires setting new one)
+clear_pin_data() {
+  keyctl purge user bw_session &>/dev/null
+  keyctl purge user bw_pin &>/dev/null
+  rm -f "$PIN_HASH_FILE"
+  rm -f "$CACHE_FILE"
+  echo "PIN cleared successfully. You will need to create a new PIN on next use."
 }
 
 # Show notification about the password being copied.
@@ -414,25 +597,25 @@ show_copy_notification() {
   local body=""
   local extra_options=()
 
-  title="<b>$(echo "$1" | jq -r '.name')</b> copied"
+  title="$(echo "$1" | jq -r '.name') copied"
 
   if [[ $SHOW_PASSWORD == "yes" ]]; then
     pass=$(echo "$1" | jq -r '.login.password')
-    body="${pass:0:4}****"
+    body="${pass:0:4}****\n"
   fi
 
   if [[ $CLEAR -gt 0 ]]; then
-    body="$body<br>Will be cleared in ${CLEAR} seconds."
+    body="${body}Will be cleared in ${CLEAR} seconds."
     # Keep notification visible while the clipboard contents are active.
     extra_options+=("-t" "$((CLEAR * 1000))")
   fi
   # not sure if icon will be present everywhere, /usr/share/icons is default icon location
-  notify-send "$title" "$body" "${extra_options[@]}" -i /usr/share/icons/hicolor/64x64/apps/bitwarden.png
+  notify-send "$title" "$body" "${extra_options[@]}" -i /usr/share/icons/Gruvbox-Plus-Dark/apps/48/bitwarden.svg
 }
 
 parse_cli_arguments() {
   # Use GNU getopt to parse command line arguments
-  if ! ARGUMENTS=$(getopt -o c:C --long auto-lock:,clear:,no-clear,show-password,state-path:,help,version -- "$@"); then
+  if ! ARGUMENTS=$(getopt -o c:C --long auto-lock:,clear:,no-clear,show-password,state-path:,clear-pin,help,version -- "$@"); then
     exit_error 1 "Failed to parse command-line arguments"
   fi
   eval set -- "$ARGUMENTS"
@@ -457,7 +640,7 @@ Options:
       Automatically lock the Vault <SECONDS> seconds after last unlock.
       Use 0 to lock immediatly.
       Use -1 to disable.
-      Default: 900 (15 minutes)
+      Default: -1 (disabled, PIN protection is used instead)
 
   -c <SECONDS>, --clear <SECONDS>, --clear=<SECONDS>
       Clear password from clipboard after this many seconds.
@@ -469,6 +652,9 @@ Options:
 
   --show-password
       Show the first 4 characters of the copied password in the notification.
+
+  --clear-pin
+      Clear the PIN and all cached vault data. Use this to reset PIN protection.
 
 Quick Actions:
   When hovering over an item in the rofi menu, you can make use of Quick Actions.
@@ -485,17 +671,21 @@ Quick Actions:
   $KB_TYPEPASS  Autotype the password [needs xdotool or ydotool]
   $KB_TYPETOTP  Autotype the TOTP [needs xdotool or ydotool]
 
-  $KB_LOCK  Lock your vault
+  $KB_LOCK  Lock your vault (clears PIN session and cache)
+
+PIN Protection:
+  This script uses PIN protection to secure your cached vault data.
+  - On first use, you'll be asked to set a PIN (minimum 6 characters)
+  - PIN is cached for 5 minutes after successful entry
+  - Vault data is encrypted with your PIN
+  - Use Alt+L or --clear-pin to completely clear PIN and cached data
 
 Examples:
   # Default options work well
   $NAME
 
-  # Immediatly lock the Vault after use
-  $NAME --auto-lock 0
-
-  # Never lock the Vault
-  $NAME --auto-lock -1
+  # Clear PIN and reset
+  $NAME --clear-pin
 
   # Place rofi on top of screen, like a Quake console
   $NAME -- -location 2
@@ -524,6 +714,10 @@ USAGE
         SHOW_PASSWORD=yes
         shift
         ;;
+      --clear-pin )
+        clear_pin_data
+        exit 0
+        ;;
       -- )
         shift
         ROFI_OPTIONS=("$@")
@@ -537,6 +731,11 @@ USAGE
 
 parse_cli_arguments "$@"
 
+if [ $USE_PIN = "yes" ]; then
+  check_mkpasswd  # Check dependency first
+  AUTO_LOCK=-1 # set auto lock to -1 because its going to be managed by pin!
+  get_pin
+fi
 get_session_key
 select_autotype_command
 select_copy_command
