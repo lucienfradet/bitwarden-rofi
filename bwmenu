@@ -235,6 +235,7 @@ get_session_key() {
     fi
     BW_HASH=$(keyctl pipe "$key_id")
   fi
+}
 
 
 # Load encrypted passwords from cache if exists
