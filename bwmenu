@@ -10,10 +10,10 @@ BW_HASH=
 CLEAR=$DEFAULT_CLEAR # Clear password after N seconds (0 to disable)
 SHOW_PASSWORD=no # Show part of the password in the notification
 AUTO_LOCK=900 # 15 minutes, default for bitwarden apps
-CLIPBOARD_HISTORY_CLEAR="" # Enter the clear command for you cliboard history manager
+CLIPBOARD_HISTORY_CLEAR="copyq remove" # Enter the clear command for you cliboard history manager
 
 # PIN protection settings
-USE_PIN=no # Use pin protection after master password is entered ounce (reset on /tmp clear)
+USE_PIN=yes # Use pin protection after master password is entered ounce (reset on /tmp clear)
 PIN_CACHE_DIR="$HOME/.local/share/bwmenu"
 PIN_HASH_FILE="$PIN_CACHE_DIR/pin.sha256"  # Stores hashed PIN
 PIN_TIMEOUT=300 # 5 minutes
@@ -610,7 +610,7 @@ show_copy_notification() {
     extra_options+=("-t" "$((CLEAR * 1000))")
   fi
   # not sure if icon will be present everywhere, /usr/share/icons is default icon location
-  notify-send "$title" "$body" "${extra_options[@]}" -i /usr/share/icons/hicolor/64x64/apps/bitwarden.png
+  notify-send "$title" "$body" "${extra_options[@]}" -i /usr/share/icons/Gruvbox-Plus-Dark/apps/48/bitwarden.svg
 }
 
 parse_cli_arguments() {
