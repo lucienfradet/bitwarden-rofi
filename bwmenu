@@ -214,7 +214,7 @@ ask_password() {
   rm -f "$CACHE_FILE"
   
   mpw=$(printf '' | rofi -dmenu -p "Master Password" -password -l 0 ${ROFI_OPTIONS[@]}) || exit $?
-  if ! out="$(bw --raw --nointeraction unlock "$mpw" 2>&1)"; then
+  if ! out="$(bw --raw --nointeraction unlock "$mpw" 2> /dev/null)"; then
     exit_error 1 "Could not unlock vault: $out"
   fi
   echo "$out"
@@ -235,7 +235,7 @@ get_session_key() {
     fi
     BW_HASH=$(keyctl pipe "$key_id")
   fi
-}
+
 
 # Load encrypted passwords from cache if exists
 load_cache() {
@@ -610,7 +610,7 @@ show_copy_notification() {
     extra_options+=("-t" "$((CLEAR * 1000))")
   fi
   # not sure if icon will be present everywhere, /usr/share/icons is default icon location
-  notify-send "$title" "$body" "${extra_options[@]}" -i /usr/share/icons/Gruvbox-Plus-Dark/apps/48/bitwarden.svg
+  notify-send "$title" "$body" "${extra_options[@]}" -i /usr/share/icons/Gruvbox-Plus-Dark/apps/scalable/bitwarden.svg
 }
 
 parse_cli_arguments() {
