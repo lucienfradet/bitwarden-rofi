@@ -10,7 +10,7 @@ BW_HASH=
 CLEAR=$DEFAULT_CLEAR # Clear password after N seconds (0 to disable)
 SHOW_PASSWORD=no # Show part of the password in the notification
 AUTO_LOCK=900 # 15 minutes, default for bitwarden apps
-CLIPBOARD_HISTORY_CLEAR="" # Enter the clear command for you cliboard history manager
+CLIPBOARD_HISTORY_CLEAR= # Enter the clear command for you cliboard history manager
 
 # PIN protection settings
 USE_PIN=no # Use pin protection after master password is entered ounce (reset on /tmp clear)
@@ -76,11 +76,10 @@ check_mkpasswd() {
   fi
 }
 
-# Hash the PIN using SHA256
+# Hash the PIN using a modern, slow, memory-hard scheme 
 hash_pin() {
-  # echo -n "$1" | sha256sum | awk '{print $1}'
-  # Requires mkpasswd from whois package
-  echo "$1" | mkpasswd --stdin -m sha-512 -S "$(openssl rand -hex 8)"
+  # Requires mkpasswd from whois package (with yescrypt support)
+  echo "$1" | mkpasswd --stdin -m yescrypt
 }
 
 # Check if PIN is already set
@@ -214,9 +213,13 @@ ask_password() {
   rm -f "$CACHE_FILE"
   
   mpw=$(printf '' | rofi -dmenu -p "Master Password" -password -l 0 ${ROFI_OPTIONS[@]}) || exit $?
-  if ! out="$(bw --raw --nointeraction unlock "$mpw" 2> /dev/null)"; then
-    exit_error 1 "Could not unlock vault: $out"
+  tmp_error=$(mktemp)
+  if ! out="$(bw --raw --nointeraction unlock "$mpw" 2> "$tmp_error")"; then
+    error_msg=$(cat "$tmp_error")
+    rm -f "$tmp_error"
+    exit_error 1 "Could not unlock vault: $error_msg"
   fi
+  rm -f "$tmp_error"
   echo "$out"
 }
 
@@ -381,7 +384,7 @@ sync_bitwarden() {
     exit_error 1 "Failed to sync bitwarden: $error"
   fi
 
-  rm -f $CACHE_FILE
+  rm -f "$CACHE_FILE"
   load_items
   show_items
 }
@@ -674,11 +677,12 @@ Quick Actions:
   $KB_LOCK  Lock your vault (clears PIN session and cache)
 
 PIN Protection:
-  This script uses PIN protection to secure your cached vault data.
+  With USE_PIN="yes", This script uses PIN protection to secure your cached vault data.
   - On first use, you'll be asked to set a PIN (minimum 6 characters)
   - PIN is cached for 5 minutes after successful entry
   - Vault data is encrypted with your PIN
-  - Use Alt+L or --clear-pin to completely clear PIN and cached data
+  - Use Alt+L to clear pin cached session data and lock the vault
+  - Use --clear-pin to completely clear PIN and cached session data
 
 Examples:
   # Default options work well
