@@ -125,9 +125,9 @@ verify_pin() {
   # Extract salt from stored hash (format: $6$SALT$HASH)
   local salt=$(echo "$stored_hash" | cut -d'$' -f3)
   
-  # Hash entered PIN with the SAME salt
+  # Hash entered PIN
   local entered_hash
-  entered_hash=$(echo "$entered_pin" | mkpasswd --stdin -m sha-512 -S "$salt")
+  entered_hash=$(echo "$entered_pin" | mkpasswd --stdin -S "$stored_hash")
   
   # Compare hashes
   [ "$entered_hash" = "$stored_hash" ]
