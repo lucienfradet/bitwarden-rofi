@@ -242,6 +242,11 @@ get_session_key() {
 
 # Load encrypted passwords from cache if exists
 load_cache() {
+  if [ "$USE_PIN" != "yes" ]; then
+    load_items
+    return
+  fi
+
   if [ -f "$CACHE_FILE" ]; then
     ITEMS=$(decrypt_with_pin "$CACHE_FILE" "$USER_PIN")
     if [ $? -ne 0 ]; then
@@ -261,9 +266,11 @@ load_items() {
     exit_error $? "Could not load items: $ITEMS"
   fi
 
-  # create dir for cache and encrypt $ITEMS with PIN
-  mkdir -p $(dirname "$CACHE_FILE")
-  encrypt_with_pin "$ITEMS" "$CACHE_FILE" "$USER_PIN"
+  # Cache when PIN protection is active
+  if [ "$USE_PIN" = "yes" ]; then
+    mkdir -p $(dirname "$CACHE_FILE")
+    encrypt_with_pin "$ITEMS" "$CACHE_FILE" "$USER_PIN"
+  fi
 }
 
 exit_error() {
