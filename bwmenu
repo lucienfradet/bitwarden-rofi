@@ -695,9 +695,6 @@ Examples:
   # Default options work well
   $NAME
 
-  # Clear PIN and reset
-  $NAME --clear-pin
-
   # Place rofi on top of screen, like a Quake console
   $NAME -- -location 2
 USAGE
