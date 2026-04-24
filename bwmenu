@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-
 # Rofi extension for BitWarden-cli
+
+export NODE_NO_WARNINGS=1
+
 NAME="$(basename "$0")"
 VERSION="0.5"
 DEFAULT_CLEAR=5
