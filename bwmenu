@@ -222,6 +222,7 @@ ask_password() {
     exit_error 1 "Could not unlock vault: $error_msg"
   fi
   rm -f "$tmp_error"
+  notify-send "bitwarden-rofi" "Correct master password. Preparing vault..." -i /usr/share/icons/Gruvbox-Plus-Dark/apps/scalable/bitwarden.svg
   echo "$out"
 }
 
