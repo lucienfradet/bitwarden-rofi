@@ -264,10 +264,16 @@ load_cache() {
 # source the hash file to gain access to the BitWarden CLI
 # Pre fetch all the items
 load_items() {
-  if ! ITEMS=$(bw --nointeraction list items --session "$BW_HASH" 2>/dev/null); then
+  local err_file
+  err_file=$(mktemp)
+  if ! ITEMS=$(bw --nointeraction list items --session "$BW_HASH" 2>"$err_file"); then
+    local err
+    err=$(cat "$err_file")
+    rm -f "$err_file"
     keyctl purge user bw_session &>/dev/null
-    exit_error $? "Could not load items: $ITEMS"
+    exit_error 1 "Could not load items: $err"
   fi
+  rm -f "$err_file"
 
   # Cache when PIN protection is active
   if [ "$USE_PIN" = "yes" ]; then
