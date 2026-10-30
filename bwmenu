@@ -317,7 +317,10 @@ rofi_menu() {
   }
 
   rofi -dmenu -p 'Name' \
-    -i -no-custom \
+    # -i -no-custom \ # Removing this tag as it started causing display issues
+                      # in oct 2026 (Random entries would still showup despite 
+                      # not matching search patern) 
+    -i \
     -mesg "$msg" \
     "${actions[@]}" \
     "${ROFI_OPTIONS[@]}"
