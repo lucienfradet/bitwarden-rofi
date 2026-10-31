@@ -316,10 +316,10 @@ rofi_menu() {
 <b>$KB_TYPEALL</b>: Type all  | <b>$KB_TYPEUSER</b>: Type user | <b>$KB_TYPEPASS</b>: Type pass | <b>$KB_TYPETOTP</b>: Type totp"
   }
 
+  # -i -no-custom \ # Removing this tag as it started causing display issues
+                    # in oct 2026 (Random entries would still showup despite 
+                    # not matching search patern) 
   rofi -dmenu -p 'Name' \
-    # -i -no-custom \ # Removing this tag as it started causing display issues
-                      # in oct 2026 (Random entries would still showup despite 
-                      # not matching search patern) 
     -i \
     -mesg "$msg" \
     "${actions[@]}" \
